@@ -68,6 +68,11 @@
     status.style.color = isError ? "#b63855" : "";
   }
 
+  if (window.location.protocol === "file:") {
+    setStatus("Этот файл нужно открыть через запущенное приложение, а не напрямую. Используйте http://127.0.0.1:3001/.", true);
+    analyzeButton.disabled = true;
+  }
+
   function renderFiles() {
     fileList.replaceChildren();
     state.files.forEach((file, index) => {

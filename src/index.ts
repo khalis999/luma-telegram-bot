@@ -98,7 +98,9 @@ app.post("/api/audit", webAuth, upload.array("screenshots", config.maxImages), a
 app.post("/api/translate", webAuth, async (request, response) => {
   try {
     const text = typeof request.body.text === "string" ? request.body.text : "";
-    const mode = request.body.mode === "en-ru" || request.body.mode === "natural-en" ? request.body.mode : "ru-en";
+    const mode = request.body.mode === "en-ru" || request.body.mode === "natural-en" || request.body.mode === "smart"
+      ? request.body.mode
+      : "ru-en";
     const result = await translateText(text, mode as TranslationMode);
     response.json(result);
   } catch (error) {
@@ -108,7 +110,7 @@ app.post("/api/translate", webAuth, async (request, response) => {
 });
 
 let bot: ReturnType<typeof createLumaBot> | undefined;
-if (config.telegramBotToken) {
+if (config.telegramBotToken && !config.localWebOnly) {
   bot = createLumaBot(config.telegramBotToken);
   const webhookSecret = config.telegramWebhookSecret;
 

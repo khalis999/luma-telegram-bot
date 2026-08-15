@@ -43,6 +43,7 @@ export const config = {
   dailyReportHour: parseHour(process.env.DAILY_REPORT_HOUR, 20),
   reportTimeZone: (process.env.REPORT_TIME_ZONE ?? "Asia/Makassar").trim(),
   allowDevWeb: parseBoolean(process.env.ALLOW_DEV_WEB),
+  localWebOnly: parseBoolean(process.env.LUMA_LOCAL_WEB_ONLY),
   maxImages: 10,
   maxImageBytes: 12 * 1024 * 1024,
   maxVoiceBytes: 20 * 1024 * 1024,
