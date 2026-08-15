@@ -1,4 +1,9 @@
 (() => {
+  if (window.location.protocol === "file:") {
+    window.location.replace("http://localhost:3001/");
+    return;
+  }
+
   const telegram = window.Telegram?.WebApp;
   telegram?.ready();
   telegram?.expand();
@@ -66,11 +71,6 @@
   function setStatus(message, isError = false) {
     status.textContent = message;
     status.style.color = isError ? "#b63855" : "";
-  }
-
-  if (window.location.protocol === "file:") {
-    setStatus("Этот файл нужно открыть через запущенное приложение, а не напрямую. Используйте http://127.0.0.1:3001/.", true);
-    analyzeButton.disabled = true;
   }
 
   function renderFiles() {
