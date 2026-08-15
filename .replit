@@ -1,0 +1,7 @@
+modules = ["nodejs-22"]
+run = "pnpm start"
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["sh", "-c", "pnpm install --frozen-lockfile && pnpm build"]
+run = ["sh", "-c", "pnpm start"]
