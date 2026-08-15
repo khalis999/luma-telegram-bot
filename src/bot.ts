@@ -1,4 +1,4 @@
-import { Api, Bot, Context, InlineKeyboard, Keyboard } from "grammy";
+import { Api, Bot, Context, InlineKeyboard } from "grammy";
 
 import { analyzeDialogue } from "./analyzer.js";
 import { findTemplate, STARTER_TEMPLATES, WORKFLOW_STAGES } from "./catalog.js";
@@ -25,13 +25,16 @@ interface PendingAlbum {
 const pendingAlbums = new Map<string, PendingAlbum>();
 const workspaces = new Map<number, UserWorkspace>();
 
-function mainMenu(): Keyboard {
-  return new Keyboard()
-    .text("🧠 Аудит").text("✍️ Ответ").text("🛡 Фильтр").row()
-    .text("👤 Карточка").text("📚 Шаблоны").text("🗓 План").row()
-    .text("📊 Статус").text("❓ Помощь")
-    .resized()
-    .persistent();
+function homeKeyboard(): InlineKeyboard {
+  const keyboard = new InlineKeyboard()
+    .text("🧠 Аудит", "action:audit").text("✍️ Ответ", "action:reply").row()
+    .text("🛡 Проверить текст", "action:filter").row()
+    .text("👤 Карточка", "action:card").text("📚 Шаблоны", "action:templates").row()
+    .text("🗓 План", "action:plan").text("📊 Статус", "action:status").row()
+    .text("❓ Как пользоваться", "action:help");
+
+  if (config.publicBaseUrl) keyboard.row().webApp("✦ Открыть Luma", config.publicBaseUrl);
+  return keyboard;
 }
 
 function accessMessage(userId: number | undefined): string {
@@ -63,7 +66,7 @@ async function setMode(context: Context, mode: AnalysisMode): Promise<void> {
   const userId = context.from?.id;
   if (!userId) return;
   workspace(userId).mode = mode;
-  await context.reply(modeCopy(mode), { reply_markup: mainMenu() });
+  await context.reply(modeCopy(mode), { reply_markup: homeKeyboard() });
 }
 
 function saveFacts(userId: number | undefined, facts: MemberFact[], stage: string): void {
@@ -102,6 +105,7 @@ async function sendAudit(context: Context, text: string, fileIds: string[], mode
     const result = await analyzeDialogue({ text, images, mode });
     saveFacts(userId, result.memberFacts, result.stage);
     for (const message of splitTelegramMessage(formatAudit(result))) await context.reply(message);
+    await context.reply("Готово. Выберите следующее действие:", { reply_markup: homeKeyboard() });
 
     if (config.publicBaseUrl) {
       const keyboard = new InlineKeyboard().webApp("Открыть Luma", config.publicBaseUrl);
@@ -116,7 +120,7 @@ async function sendAudit(context: Context, text: string, fileIds: string[], mode
 function templatesKeyboard(): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   for (const item of STARTER_TEMPLATES) keyboard.text(item.title, `template:${item.id}`).row();
-  return keyboard;
+  return keyboard.text("‹ В меню", "action:home");
 }
 
 function cardText(state: UserWorkspace): string {
@@ -139,26 +143,29 @@ export function createLumaBot(token: string): Bot {
       return;
     }
     workspace(userId);
+    await context.reply("Обновляю интерфейс…", { reply_markup: { remove_keyboard: true } });
     await context.reply(
       [
-        "Luma готова.",
+        "✦ LUMA",
+        "PRIVATE COPILOT",
         "",
-        "Выберите действие кнопкой ниже или отправьте текст / до 10 скриншотов одним альбомом.",
-        "Каждый результат даёт 3 варианта ответа: RU и EN.",
-        "Ничего клиенту автоматически не отправляется.",
+        "Аудит диалогов · безопасные ответы · RU + EN",
+        "",
+        "Выберите действие ниже или отправьте текст / до 10 скриншотов одним альбомом.",
+        "Ответы не отправляются автоматически.",
       ].join("\n"),
-      { reply_markup: mainMenu() },
+      { reply_markup: homeKeyboard() },
     );
   });
 
   bot.command("help", async (context) => {
-    await context.reply("Аудит проверяет диалог, Ответ готовит 3 варианта, Фильтр ищет риски. «Карточка» сохраняет только подтверждённые факты до перезапуска бота.", { reply_markup: mainMenu() });
+    await context.reply("Аудит проверяет диалог, Ответ готовит 3 варианта, Фильтр ищет риски. «Карточка» сохраняет только подтверждённые факты до перезапуска бота.", { reply_markup: homeKeyboard() });
   });
 
   bot.command("forget", async (context) => {
     const userId = context.from?.id;
     if (userId) workspaces.delete(userId);
-    await context.reply("Временные данные очищены. Постоянная история не ведётся.", { reply_markup: mainMenu() });
+    await context.reply("Временные данные очищены. Постоянная история не ведётся.", { reply_markup: homeKeyboard() });
   });
 
   for (const [command, mode] of [["audit", "audit"], ["reply", "reply"], ["filter", "filter"]] as const) {
@@ -172,32 +179,6 @@ export function createLumaBot(token: string): Bot {
     });
   }
 
-  bot.hears("🧠 Аудит", (context) => setMode(context, "audit"));
-  bot.hears("✍️ Ответ", (context) => setMode(context, "reply"));
-  bot.hears("🛡 Фильтр", (context) => setMode(context, "filter"));
-  bot.hears("👤 Карточка", async (context) => {
-    const userId = context.from?.id;
-    if (!userId || !isUserAllowed(userId)) return context.reply(accessMessage(userId));
-    await context.reply(cardText(workspace(userId)), { reply_markup: mainMenu() });
-  });
-  bot.hears("📚 Шаблоны", async (context) => {
-    if (!isUserAllowed(context.from?.id)) return context.reply(accessMessage(context.from?.id));
-    await context.reply("Выберите заготовку. В ответе будут русский и английский варианты:", { reply_markup: templatesKeyboard() });
-  });
-  bot.hears("🗓 План", async (context) => {
-    if (!isUserAllowed(context.from?.id)) return context.reply(accessMessage(context.from?.id));
-    await context.reply(["🗓 План спокойного диалога", "", ...WORKFLOW_STAGES].join("\n\n"), { reply_markup: mainMenu() });
-  });
-  bot.hears("📊 Статус", async (context) => {
-    const userId = context.from?.id;
-    if (!userId || !isUserAllowed(userId)) return context.reply(accessMessage(userId));
-    const state = workspace(userId);
-    await context.reply(["📊 Статус", `Режим: ${state.mode}`, `Фактов в карточке: ${state.facts.length}`, "Данные не записываются в базу."].join("\n"), { reply_markup: mainMenu() });
-  });
-  bot.hears("❓ Помощь", async (context) => {
-    await context.reply("Отправьте текст или скриншоты. Выберите «Фильтр» перед отправкой сложного сообщения. Для полного сброса используйте /forget.", { reply_markup: mainMenu() });
-  });
-
   bot.on("callback_query:data", async (context) => {
     const userId = context.from?.id;
     if (!isUserAllowed(userId)) {
@@ -205,6 +186,39 @@ export function createLumaBot(token: string): Bot {
       return;
     }
     const [kind, id] = context.callbackQuery.data.split(":", 2);
+    if (kind === "action" && id) {
+      await context.answerCallbackQuery();
+      if (id === "audit" || id === "reply" || id === "filter") {
+        await setMode(context, id);
+        return;
+      }
+      if (id === "card") {
+        await context.reply(cardText(workspace(userId!)), { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "templates") {
+        await context.reply("Выберите заготовку — я покажу готовый вариант на русском и английском:", { reply_markup: templatesKeyboard() });
+        return;
+      }
+      if (id === "plan") {
+        await context.reply(["🗓 План спокойного диалога", "", ...WORKFLOW_STAGES].join("\n\n"), { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "status") {
+        const state = workspace(userId!);
+        await context.reply(["📊 Статус", `Режим: ${state.mode}`, `Фактов в карточке: ${state.facts.length}`, "Данные не записываются в базу."].join("\n"), { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "help") {
+        await context.reply("Выберите режим, затем отправьте текст или скриншоты. Фильтр используйте перед отправкой сложного сообщения. Для полного сброса — /forget.", { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "home") {
+        await context.reply("✦ LUMA\nВыберите действие:", { reply_markup: homeKeyboard() });
+        return;
+      }
+      return;
+    }
     if (kind !== "template" || !id) {
       await context.answerCallbackQuery();
       return;
@@ -215,7 +229,7 @@ export function createLumaBot(token: string): Bot {
       return;
     }
     await context.answerCallbackQuery({ text: "Готово" });
-    await context.reply(`📚 ${template.title}\n\nRU: ${template.ru}\n\nEN: ${template.en}`, { reply_markup: mainMenu() });
+    await context.reply(`📚 ${template.title}\n\nRU: ${template.ru}\n\nEN: ${template.en}`, { reply_markup: homeKeyboard() });
   });
 
   bot.on("message:photo", async (context) => {
