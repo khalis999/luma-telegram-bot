@@ -30,12 +30,24 @@ function cleanBaseUrl(value: string | undefined): string {
   return (value ?? "").trim().replace(/\/+$/, "");
 }
 
+function resolvePublicBaseUrl(): string {
+  const configured = cleanBaseUrl(process.env.PUBLIC_BASE_URL);
+  if (configured) return configured;
+
+  // Replit exposes a temporary HTTPS domain while the workspace is running.
+  // Using it automatically makes the Telegram Mini App available during setup,
+  // without copying an address into a secret by hand. A production deployment
+  // should still define PUBLIC_BASE_URL explicitly.
+  const replitDomain = (process.env.REPLIT_DEV_DOMAIN ?? "").trim();
+  return replitDomain ? `https://${replitDomain}` : "";
+}
+
 export const config = {
   port: Number.parseInt(process.env.PORT ?? "3000", 10),
   telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN ?? "").trim(),
   telegramAllowedUserIds: parseIds(process.env.TELEGRAM_ALLOWED_USER_IDS),
   telegramWebhookSecret: (process.env.TELEGRAM_WEBHOOK_SECRET ?? "").trim(),
-  publicBaseUrl: cleanBaseUrl(process.env.PUBLIC_BASE_URL),
+  publicBaseUrl: resolvePublicBaseUrl(),
   openAiApiKey: (process.env.OPENAI_API_KEY ?? "").trim(),
   openAiModel: (process.env.OPENAI_MODEL ?? "gpt-5.4-mini").trim(),
   transcriptionModel: (process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe").trim(),
