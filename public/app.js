@@ -34,10 +34,13 @@
     },
   ];
   const PLAN = [
-    "Начните с контекста: имя, интересы и настроение, без допроса.",
-    "Поддерживайте живой разговор: короткий ответ и уместный встречный вопрос.",
-    "Перед сложным сообщением используйте фильтр и соблюдайте правила платформы.",
-    "Сохраняйте только подтверждённые, несенситивные факты из диалога.",
+    "Лёгкий лайф-кадр: настроение дня + один естественный вопрос.",
+    "Интерес или хобби: короткая история, фото или видео процесса.",
+    "Закулисье: как готовится образ, идея или рабочее место.",
+    "Опрос: предложите выбрать тему следующего поста.",
+    "Личное достижение: тренировка, учёба или маленькая цель дня.",
+    "Подборка: 2–3 безопасных кадра или мысли недели.",
+    "Итог недели: благодарность и вопрос, что понравилось больше.",
   ];
   const state = { mode: "audit", language: "ru", files: [], result: null, panel: null, savedCard: loadCard() };
   const dialogue = document.querySelector("#dialogue");
@@ -200,13 +203,53 @@
   }
 
   function showPlan() {
-    workspacePanel.replaceChildren(panelHeading("План диалога", "4 шага"));
+    workspacePanel.replaceChildren(panelHeading("Контент-план", "7 дней"));
     const list = document.createElement("ol");
     list.className = "plan-list";
     PLAN.forEach((item) => list.append(textElement("li", "", item)));
-    workspacePanel.append(list, textElement("p", "panel-note", "Кнопки и шаблоны помогают оператору — ответы клиенту автоматически не отправляются."));
+    workspacePanel.append(list, textElement("p", "panel-note", "Перед публикацией проверьте подпись фильтром. Не добавляйте личные данные, внешние платежи или предложения вне платформы."));
     workspacePanel.hidden = false;
     state.panel = "plan";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function duplicateSummary(text) {
+    const fragments = text
+      .split(/\n+|(?<=[.!?])\s+/u)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 8)
+      .slice(0, 300);
+    const seen = new Map();
+    fragments.forEach((fragment, index) => {
+      const key = fragment.toLocaleLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "");
+      if (key.length < 8) return;
+      const items = seen.get(key) || [];
+      items.push(index + 1);
+      seen.set(key, items);
+    });
+    const duplicates = [...seen.values()].filter((items) => items.length > 1);
+    if (!duplicates.length) return "Повторов не найдено. Можно переходить к финальной проверке текста.";
+    return [
+      `Найдено повторов: ${duplicates.length}.`,
+      ...duplicates.slice(0, 8).map((items, index) => `Повтор ${index + 1}: фразы ${items.join(", ")}`),
+      "Исходные фрагменты не отображаются — так инструмент не воспроизводит потенциально рискованный текст.",
+    ].join("\n");
+  }
+
+  function showDuplicates() {
+    workspacePanel.replaceChildren(panelHeading("Антидубли", "Локально"));
+    const source = document.createElement("textarea");
+    source.rows = 6;
+    source.placeholder = "Вставьте текст, который хотите проверить на повторы…";
+    const run = textElement("button", "primary", "Найти повторы");
+    run.type = "button";
+    const output = textElement("p", "translate-output", "");
+    run.addEventListener("click", () => {
+      output.textContent = source.value.trim() ? duplicateSummary(source.value) : "Сначала добавьте текст.";
+    });
+    workspacePanel.append(source, run, output, textElement("p", "panel-note", "Проверка работает прямо в Mini App и не отправляет текст в сторонние сервисы."));
+    workspacePanel.hidden = false;
+    state.panel = "duplicates";
     workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
@@ -309,6 +352,7 @@
       if (panel === "templates") showTemplates();
       if (panel === "card") showCard();
       if (panel === "plan") showPlan();
+      if (panel === "duplicates") showDuplicates();
       if (panel === "translate") showTranslate();
       if (panel === "usage") showUsage();
     });
