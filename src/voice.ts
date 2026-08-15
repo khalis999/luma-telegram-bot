@@ -27,7 +27,7 @@ export async function transcribeVoice(buffer: Buffer, filename = "voice.ogg"): P
 
   const reservation = reserveUsage("voice");
   try {
-    const file = await toFile(buffer, filename, { type: "audio/ogg" });
+    const file = await toFile(buffer, filename);
     const transcription = await openAiClient().audio.transcriptions.create({
       file,
       model: config.transcriptionModel,
