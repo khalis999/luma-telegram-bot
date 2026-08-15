@@ -1,7 +1,6 @@
 import OpenAI, { toFile } from "openai";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,7 +9,6 @@ import { scanProhibited } from "./filter.js";
 import { reserveUsage } from "./usage.js";
 
 let client: OpenAI | undefined;
-const require = createRequire(import.meta.url);
 
 interface PreparedAudio {
   buffer: Buffer;
@@ -44,8 +42,7 @@ function contentTypeFor(filename: string): string {
 }
 
 function runFfmpeg(input: string, output: string): Promise<void> {
-  const ffmpegPath = require("ffmpeg-static") as string | null;
-  if (!ffmpegPath) throw new Error("voice-convert-unavailable");
+  const ffmpegPath = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
 
   return new Promise((resolve, reject) => {
     const process = spawn(ffmpegPath, ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", output], { stdio: "ignore" });
