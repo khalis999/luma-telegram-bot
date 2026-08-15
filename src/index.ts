@@ -11,6 +11,7 @@ import { analyzeDialogue } from "./analyzer.js";
 import { createLumaBot } from "./bot.js";
 import { config, isUserAllowed } from "./config.js";
 import { validateTelegramInitData } from "./telegram-auth.js";
+import { translateText, type TranslationMode } from "./translator.js";
 
 const app = express();
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,18 @@ app.post("/api/audit", webAuth, upload.array("screenshots", config.maxImages), a
   }
 });
 
+app.post("/api/translate", webAuth, async (request, response) => {
+  try {
+    const text = typeof request.body.text === "string" ? request.body.text : "";
+    const mode = request.body.mode === "en-ru" || request.body.mode === "natural-en" ? request.body.mode : "ru-en";
+    const result = await translateText(text, mode as TranslationMode);
+    response.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Не удалось выполнить перевод";
+    response.status(400).json({ error: message });
+  }
+});
+
 let bot: ReturnType<typeof createLumaBot> | undefined;
 if (config.telegramBotToken) {
   bot = createLumaBot(config.telegramBotToken);
@@ -122,6 +135,7 @@ const server = app.listen(config.port, async () => {
     { command: "audit", description: "Полный аудит текста" },
     { command: "reply", description: "Три варианта ответа" },
     { command: "filter", description: "Проверить перед отправкой" },
+    { command: "translate", description: "Перевести текст" },
     { command: "forget", description: "Очистить временные данные" },
   ]);
 

@@ -205,8 +205,72 @@
     workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
+  function showTranslate() {
+    workspacePanel.replaceChildren(panelHeading("Онлайн-переводчик", "RU + EN"));
+    const controls = document.createElement("div");
+    controls.className = "translate-modes";
+    const modes = [
+      ["ru-en", "🇷🇺 → 🇬🇧"],
+      ["en-ru", "🇬🇧 → 🇷🇺"],
+      ["natural-en", "✨ Natural English"],
+    ];
+    let selectedMode = "ru-en";
+    const output = textElement("p", "translate-output", "");
+    modes.forEach(([mode, label]) => {
+      const button = textElement("button", `secondary ${mode === selectedMode ? "selected" : ""}`, label);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        selectedMode = mode;
+        controls.querySelectorAll("button").forEach((item) => item.classList.toggle("selected", item === button));
+      });
+      controls.append(button);
+    });
+    const source = document.createElement("textarea");
+    source.rows = 5;
+    source.placeholder = "Вставьте текст для перевода…";
+    const run = textElement("button", "primary", "Перевести");
+    run.type = "button";
+    run.addEventListener("click", async () => {
+      if (!source.value.trim()) {
+        output.textContent = "Сначала добавьте текст.";
+        return;
+      }
+      run.disabled = true;
+      output.textContent = "Переводим и проверяем безопасность…";
+      try {
+        const response = await fetch("/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-telegram-init-data": telegram?.initData ?? "" },
+          body: JSON.stringify({ text: source.value, mode: selectedMode }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Перевод недоступен");
+        output.textContent = data.text;
+        output.classList.toggle("unsafe", !data.safe);
+      } catch (error) {
+        output.textContent = error instanceof Error ? error.message : "Не удалось выполнить перевод";
+        output.classList.add("unsafe");
+      } finally {
+        run.disabled = false;
+      }
+    });
+    workspacePanel.append(controls, source, run, output, textElement("p", "panel-note", "Перевод не отправляет сообщения автоматически. Перед показом результат проходит проверку правил."));
+    workspacePanel.hidden = false;
+    state.panel = "translate";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   document.querySelectorAll("[data-quick-mode]").forEach((button) => {
     button.addEventListener("click", () => { clearPanel(); setMode(button.dataset.quickMode, true); });
+  });
+  document.querySelectorAll("[data-description-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      clearPanel();
+      setMode("filter", true);
+      inputTitle.textContent = "Проверьте описание";
+      dialogue.placeholder = "Вставьте описание публикации или подпись к контенту…";
+      setStatus("Режим описания: проверю язык, структуру и безопасность.");
+    });
   });
   document.querySelectorAll("[data-panel]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -215,6 +279,7 @@
       if (panel === "templates") showTemplates();
       if (panel === "card") showCard();
       if (panel === "plan") showPlan();
+      if (panel === "translate") showTranslate();
     });
   });
 
