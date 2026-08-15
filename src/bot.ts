@@ -6,6 +6,8 @@ import { config, hasAllowedUsers, isUserAllowed } from "./config.js";
 import { formatAudit, splitTelegramMessage } from "./format.js";
 import { translateText, type TranslationMode } from "./translator.js";
 import type { MemberFact } from "./types.js";
+import { formatUsageSummary } from "./usage.js";
+import { transcribeVoice } from "./voice.js";
 
 type AnalysisMode = "audit" | "reply" | "filter";
 
@@ -15,6 +17,15 @@ interface UserWorkspace {
   stage?: string;
   translation?: TranslationMode;
   tags: string[];
+  awaitingReminder: boolean;
+  dailyReport: boolean;
+  lastReportDate?: string;
+  activity: {
+    audits: number;
+    translations: number;
+    voices: number;
+    reminders: number;
+  };
 }
 
 interface PendingAlbum {
@@ -34,6 +45,8 @@ function homeKeyboard(): InlineKeyboard {
     .text("🛡 Проверить текст", "action:filter").text("🌐 Перевод", "action:translate").row()
     .text("👤 Карточка", "action:card").text("🏷 Теги", "action:tags").row()
     .text("📚 Шаблоны", "action:templates").text("🗓 План", "action:plan").row()
+    .text("🎙 Голос", "action:voice").text("⏰ Напомнить", "action:reminder").row()
+    .text("📈 Отчёт", "action:report").text("💰 Лимит", "action:budget").row()
     .text("📊 Статус", "action:status").row()
     .text("❓ Как пользоваться", "action:help");
 
@@ -50,7 +63,14 @@ function accessMessage(userId: number | undefined): string {
 function workspace(userId: number): UserWorkspace {
   const existing = workspaces.get(userId);
   if (existing) return existing;
-  const next: UserWorkspace = { mode: "audit", facts: [], tags: [] };
+  const next: UserWorkspace = {
+    mode: "audit",
+    facts: [],
+    tags: [],
+    awaitingReminder: false,
+    dailyReport: false,
+    activity: { audits: 0, translations: 0, voices: 0, reminders: 0 },
+  };
   workspaces.set(userId, next);
   return next;
 }
@@ -58,6 +78,11 @@ function workspace(userId: number): UserWorkspace {
 function currentMode(context: Context): AnalysisMode {
   const userId = context.from?.id;
   return userId ? workspace(userId).mode : "audit";
+}
+
+function recordActivity(userId: number | undefined, action: keyof UserWorkspace["activity"]): void {
+  if (!userId) return;
+  workspace(userId).activity[action] += 1;
 }
 
 function modeCopy(mode: AnalysisMode): string {
@@ -69,8 +94,10 @@ function modeCopy(mode: AnalysisMode): string {
 async function setMode(context: Context, mode: AnalysisMode): Promise<void> {
   const userId = context.from?.id;
   if (!userId) return;
-  workspace(userId).mode = mode;
-  delete workspace(userId).translation;
+  const state = workspace(userId);
+  state.mode = mode;
+  state.awaitingReminder = false;
+  delete state.translation;
   await context.reply(modeCopy(mode), { reply_markup: homeKeyboard() });
 }
 
@@ -83,13 +110,13 @@ function saveFacts(userId: number | undefined, facts: MemberFact[], stage: strin
     .slice(0, 12);
 }
 
-async function downloadTelegramFile(api: Api, fileId: string): Promise<Buffer> {
+async function downloadTelegramFile(api: Api, fileId: string, maxBytes: number, label: string): Promise<Buffer> {
   const file = await api.getFile(fileId);
   if (!file.file_path) throw new Error("Сервис не вернул файл");
   const response = await fetch(`https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`);
-  if (!response.ok) throw new Error("Не удалось загрузить скриншот");
+  if (!response.ok) throw new Error(`Не удалось загрузить ${label}`);
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > config.maxImageBytes) throw new Error("Один из скриншотов слишком большой");
+  if (bytes.byteLength > maxBytes) throw new Error(`${label} слишком большой`);
   return bytes;
 }
 
@@ -106,9 +133,10 @@ async function sendAudit(context: Context, text: string, fileIds: string[], mode
 
   try {
     await context.replyWithChatAction("typing");
-    const images = await Promise.all(fileIds.map((fileId) => downloadTelegramFile(context.api, fileId)));
+    const images = await Promise.all(fileIds.map((fileId) => downloadTelegramFile(context.api, fileId, config.maxImageBytes, "скриншот")));
     const result = await analyzeDialogue({ text, images, mode });
     saveFacts(userId, result.memberFacts, result.stage);
+    recordActivity(userId, "audits");
     for (const message of splitTelegramMessage(formatAudit(result))) await context.reply(message);
     await context.reply("Готово. Выберите следующее действие:", { reply_markup: homeKeyboard() });
 
@@ -131,13 +159,14 @@ function templatesKeyboard(): InlineKeyboard {
 function translationKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🇷🇺 → 🇬🇧", "translate:ru-en").text("🇬🇧 → 🇷🇺", "translate:en-ru").row()
-    .text("✨ Natural English", "translate:natural-en").row()
+    .text("✨ Natural English", "translate:natural-en").text("🪄 Умный", "translate:smart").row()
     .text("‹ В меню", "action:home");
 }
 
 function translationCopy(mode: TranslationMode): string {
   if (mode === "ru-en") return "Режим «RU → EN». Пришлите русский текст — верну естественный английский вариант.";
   if (mode === "en-ru") return "Режим «EN → RU». Пришлите английский текст — верну понятный русский вариант.";
+  if (mode === "smart") return "Режим «Умный перевод». Пришлите текст на русском или английском — сам определю язык и переведу на другой.";
   return "Режим «Natural English». Пришлите черновик — сделаю короткий и естественный английский.";
 }
 
@@ -150,12 +179,116 @@ async function sendTranslation(context: Context, text: string, mode: Translation
   try {
     await context.replyWithChatAction("typing");
     const result = await translateText(text, mode);
+    recordActivity(userId, "translations");
     const prefix = result.safe ? "🌐" : "🛡";
     await context.reply(`${prefix} ${result.label}\n\n${result.text}`, { reply_markup: homeKeyboard() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось выполнить перевод";
     await context.reply(message, { reply_markup: homeKeyboard() });
   }
+}
+
+function reportKeyboard(enabled: boolean): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(enabled ? "✅ Ежедневный отчёт включён" : "Включить ежедневный отчёт", enabled ? "action:report-off" : "action:report-on")
+    .row()
+    .text("‹ В меню", "action:home");
+}
+
+function dailyReportText(state: UserWorkspace): string {
+  return [
+    "📈 Luma — отчёт за сегодня",
+    `Аудиты: ${state.activity.audits} · Переводы: ${state.activity.translations} · Голосовые: ${state.activity.voices}`,
+    `Напоминания: ${state.activity.reminders}`,
+    "",
+    formatUsageSummary(),
+    "",
+    "Отчёт хранится только в памяти работающего бота и не является данными биллинга OpenAI.",
+  ].join("\n");
+}
+
+function scheduleReminder(context: Context, minutes: number, note: string): void {
+  const userId = context.from?.id;
+  if (!userId) return;
+  const timer = setTimeout(() => {
+    void context.api.sendMessage(userId, `⏰ Напоминание\n\n${note}`, { reply_markup: homeKeyboard() })
+      .catch((error: unknown) => console.error("[luma] reminder error:", error));
+  }, minutes * 60_000);
+  timer.unref();
+  recordActivity(userId, "reminders");
+}
+
+async function addReminderFromText(context: Context, raw: string): Promise<boolean> {
+  const match = raw.trim().match(/^(\d{1,4})\s+([\s\S]{1,600})$/);
+  if (!match) return false;
+  const minutes = Number.parseInt(match[1] ?? "", 10);
+  if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+    await context.reply("Укажите от 1 до 1440 минут. Например: 30 проверить ответ", { reply_markup: homeKeyboard() });
+    return true;
+  }
+  const note = (match[2] ?? "").trim();
+  scheduleReminder(context, minutes, note);
+  await context.reply(`⏰ Готово. Напомню через ${minutes} мин.: ${note}`, { reply_markup: homeKeyboard() });
+  return true;
+}
+
+async function sendVoiceText(context: Context, fileId: string, filename: string): Promise<void> {
+  const userId = context.from?.id;
+  if (!isUserAllowed(userId)) {
+    await context.reply(accessMessage(userId));
+    return;
+  }
+
+  try {
+    await context.replyWithChatAction("typing");
+    const audio = await downloadTelegramFile(context.api, fileId, config.maxVoiceBytes, "голосовое");
+    const text = await transcribeVoice(audio, filename);
+    recordActivity(userId, "voices");
+    if (!text) {
+      await context.reply("🛡 В голосовом обнаружена тема, которую нельзя воспроизводить. Текст не показан.", { reply_markup: homeKeyboard() });
+      return;
+    }
+    await context.reply(`🎙 Текст голосового\n\n${text}`, { reply_markup: homeKeyboard() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Не удалось распознать голосовое";
+    await context.reply(message, { reply_markup: homeKeyboard() });
+  }
+}
+
+function reportTime(): { date: string; hour: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: config.reportTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value])) as Record<string, string>;
+  return {
+    date: `${values.year ?? ""}-${values.month ?? ""}-${values.day ?? ""}`,
+    hour: Number.parseInt(values.hour ?? "", 10),
+  };
+}
+
+function scheduleDailyReports(bot: Bot): void {
+  const sendDueReports = () => {
+    let now: { date: string; hour: number };
+    try {
+      now = reportTime();
+    } catch {
+      now = { date: new Date().toISOString().slice(0, 10), hour: new Date().getUTCHours() };
+    }
+    if (now.hour !== config.dailyReportHour) return;
+    for (const [userId, state] of workspaces) {
+      if (!state.dailyReport || state.lastReportDate === now.date) continue;
+      void bot.api.sendMessage(userId, dailyReportText(state), { reply_markup: homeKeyboard() })
+        .then(() => { state.lastReportDate = now.date; })
+        .catch((error: unknown) => console.error("[luma] daily report error:", error));
+    }
+  };
+  const timer = setInterval(sendDueReports, 60_000);
+  timer.unref();
 }
 
 function cardText(state: UserWorkspace): string {
@@ -178,6 +311,7 @@ function tagsKeyboard(): InlineKeyboard {
 
 export function createLumaBot(token: string): Bot {
   const bot = new Bot(token);
+  scheduleDailyReports(bot);
 
   bot.command("start", async (context) => {
     const userId = context.from?.id;
@@ -202,7 +336,7 @@ export function createLumaBot(token: string): Bot {
   });
 
   bot.command("help", async (context) => {
-    await context.reply("Аудит проверяет диалог, Ответ готовит 3 варианта, Фильтр ищет риски. «Карточка» сохраняет только подтверждённые факты до перезапуска бота.", { reply_markup: homeKeyboard() });
+    await context.reply("Аудит проверяет диалог, Ответ готовит 3 варианта, Фильтр ищет риски. Можно отправить голосовое до 20 МБ — верну текст. Напоминание: /remind 30 текст. «Карточка» и отчёты хранятся только до перезапуска бота.", { reply_markup: homeKeyboard() });
   });
 
   bot.command("forget", async (context) => {
@@ -225,6 +359,28 @@ export function createLumaBot(token: string): Bot {
     await context.reply("🌐 Выберите направление перевода:", { reply_markup: translationKeyboard() });
   });
 
+  bot.command("remind", async (context) => {
+    const userId = context.from?.id;
+    if (!isUserAllowed(userId)) {
+      await context.reply(accessMessage(userId));
+      return;
+    }
+    const text = context.match?.trim() ?? "";
+    if (!await addReminderFromText(context, text)) {
+      await context.reply("⏰ Формат: /remind минуты текст\n\nНапример: /remind 30 проверить ответ", { reply_markup: homeKeyboard() });
+    }
+  });
+
+  bot.command("report", async (context) => {
+    const userId = context.from?.id;
+    if (!isUserAllowed(userId)) {
+      await context.reply(accessMessage(userId));
+      return;
+    }
+    const state = workspace(userId!);
+    await context.reply(dailyReportText(state), { reply_markup: reportKeyboard(state.dailyReport) });
+  });
+
   for (const [command, mode] of [["audit", "audit"], ["reply", "reply"], ["filter", "filter"]] as const) {
     bot.command(command, async (context) => {
       const text = context.match?.trim() ?? "";
@@ -245,7 +401,9 @@ export function createLumaBot(token: string): Bot {
     const [kind, id] = context.callbackQuery.data.split(":", 2);
     if (kind === "action" && id) {
       await context.answerCallbackQuery();
-      if (id !== "translate") delete workspace(userId!).translation;
+      const state = workspace(userId!);
+      if (id !== "translate") delete state.translation;
+      if (id !== "reminder") state.awaitingReminder = false;
       if (id === "audit" || id === "reply" || id === "filter") {
         await setMode(context, id);
         return;
@@ -266,13 +424,42 @@ export function createLumaBot(token: string): Bot {
         await context.reply("🌐 Выберите направление перевода:", { reply_markup: translationKeyboard() });
         return;
       }
+      if (id === "voice") {
+        await context.reply("🎙 Отправьте голосовое до 20 МБ — я верну текст. При обнаружении запрещённой темы текст не показывается.", { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "reminder") {
+        workspace(userId!).awaitingReminder = true;
+        await context.reply("⏰ Напишите: минуты и текст напоминания.\n\nНапример: 30 проверить ответ", { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "report") {
+        const state = workspace(userId!);
+        await context.reply(dailyReportText(state), { reply_markup: reportKeyboard(state.dailyReport) });
+        return;
+      }
+      if (id === "report-on" || id === "report-off") {
+        const state = workspace(userId!);
+        state.dailyReport = id === "report-on";
+        await context.reply(
+          state.dailyReport
+            ? `✅ Ежедневный отчёт включён. Он придёт в ${String(config.dailyReportHour).padStart(2, "0")}:00 (${config.reportTimeZone}).`
+            : "Ежедневный отчёт выключен.",
+          { reply_markup: reportKeyboard(state.dailyReport) },
+        );
+        return;
+      }
+      if (id === "budget") {
+        await context.reply(`💰 Лимит расходов\n\n${formatUsageSummary()}`, { reply_markup: homeKeyboard() });
+        return;
+      }
       if (id === "plan") {
         await context.reply(["🗓 План спокойного диалога", "", ...WORKFLOW_STAGES].join("\n\n"), { reply_markup: homeKeyboard() });
         return;
       }
       if (id === "status") {
         const state = workspace(userId!);
-        await context.reply(["📊 Статус", `Режим: ${state.mode}`, `Фактов в карточке: ${state.facts.length}`, "Данные не записываются в базу."].join("\n"), { reply_markup: homeKeyboard() });
+        await context.reply(["📊 Статус", `Режим: ${state.mode}`, `Фактов в карточке: ${state.facts.length}`, `Ежедневный отчёт: ${state.dailyReport ? "включён" : "выключен"}`, "Данные не записываются в базу."].join("\n"), { reply_markup: homeKeyboard() });
         return;
       }
       if (id === "help") {
@@ -294,7 +481,7 @@ export function createLumaBot(token: string): Bot {
       await context.reply(`🏷 Теги: ${state.tags.length ? state.tags.join(", ") : "нет"}`, { reply_markup: tagsKeyboard() });
       return;
     }
-    if (kind === "translate" && (id === "ru-en" || id === "en-ru" || id === "natural-en")) {
+    if (kind === "translate" && (id === "ru-en" || id === "en-ru" || id === "natural-en" || id === "smart")) {
       workspace(userId!).translation = id;
       await context.answerCallbackQuery({ text: "Режим перевода выбран" });
       await context.reply(translationCopy(id), { reply_markup: homeKeyboard() });
@@ -353,9 +540,25 @@ export function createLumaBot(token: string): Bot {
     pendingAlbums.set(groupId, album);
   });
 
+  bot.on("message:voice", async (context) => {
+    await sendVoiceText(context, context.message.voice.file_id, "voice.ogg");
+  });
+
+  bot.on("message:audio", async (context) => {
+    const filename = context.message.audio.file_name?.trim() || "audio.mp3";
+    await sendVoiceText(context, context.message.audio.file_id, filename);
+  });
+
   bot.on("message:text", async (context) => {
     if (context.message.text.startsWith("/")) return;
-    const translation = context.from?.id ? workspace(context.from.id).translation : undefined;
+    const state = context.from?.id ? workspace(context.from.id) : undefined;
+    if (state?.awaitingReminder) {
+      state.awaitingReminder = false;
+      if (await addReminderFromText(context, context.message.text)) return;
+      await context.reply("Не получилось прочитать напоминание. Формат: 30 проверить ответ", { reply_markup: homeKeyboard() });
+      return;
+    }
+    const translation = state?.translation;
     if (translation) {
       await sendTranslation(context, context.message.text, translation);
       return;

@@ -2,8 +2,9 @@ import OpenAI from "openai";
 
 import { config } from "./config.js";
 import { scanProhibited } from "./filter.js";
+import { reserveUsage } from "./usage.js";
 
-export type TranslationMode = "ru-en" | "en-ru" | "natural-en";
+export type TranslationMode = "ru-en" | "en-ru" | "natural-en" | "smart";
 
 export interface TranslationResult {
   label: string;
@@ -22,6 +23,7 @@ function getClient(): OpenAI {
 function translationLabel(mode: TranslationMode): string {
   if (mode === "ru-en") return "RU → EN";
   if (mode === "en-ru") return "EN → RU";
+  if (mode === "smart") return "Smart translate";
   return "Natural English";
 }
 
@@ -59,8 +61,11 @@ export async function translateText(text: string, mode: TranslationMode): Promis
     ? "Translate Russian to natural English."
     : mode === "en-ru"
       ? "Translate English to natural Russian."
-      : "Rewrite the text in concise, natural, conversational English. Preserve the meaning, but do not translate word-for-word.";
+      : mode === "smart"
+        ? "Detect whether the input is Russian or English, then translate it into the other language. Make the result concise, natural, and conversational."
+        : "Rewrite the text in concise, natural, conversational English. Preserve the meaning, but do not translate word-for-word.";
 
+  const reservation = reserveUsage("translation");
   try {
     const response = await getClient().responses.create({
       model: config.openAiModel,
@@ -74,10 +79,12 @@ export async function translateText(text: string, mode: TranslationMode): Promis
       reasoning: { effort: "low" },
       max_output_tokens: 700,
     });
+    reservation.settleText(response.usage);
     const translated = response.output_text.trim();
     if (!translated || scanProhibited(translated).length > 0) return blockedResult(mode);
     return { label: translationLabel(mode), text: translated, safe: true };
   } catch (error) {
+    reservation.cancel();
     console.error("[luma] translator error:", error);
     throw new Error(friendlyTranslatorError(error));
   }

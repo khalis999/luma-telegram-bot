@@ -16,6 +16,16 @@ function parseBoolean(value: string | undefined): boolean {
   return value?.trim().toLowerCase() === "true";
 }
 
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseHour(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 23 ? parsed : fallback;
+}
+
 function cleanBaseUrl(value: string | undefined): string {
   return (value ?? "").trim().replace(/\/+$/, "");
 }
@@ -28,9 +38,14 @@ export const config = {
   publicBaseUrl: cleanBaseUrl(process.env.PUBLIC_BASE_URL),
   openAiApiKey: (process.env.OPENAI_API_KEY ?? "").trim(),
   openAiModel: (process.env.OPENAI_MODEL ?? "gpt-5.4-mini").trim(),
+  transcriptionModel: (process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe").trim(),
+  dailySpendLimitUsd: parsePositiveNumber(process.env.DAILY_SPEND_LIMIT_USD, 0.5),
+  dailyReportHour: parseHour(process.env.DAILY_REPORT_HOUR, 20),
+  reportTimeZone: (process.env.REPORT_TIME_ZONE ?? "Asia/Makassar").trim(),
   allowDevWeb: parseBoolean(process.env.ALLOW_DEV_WEB),
   maxImages: 10,
   maxImageBytes: 12 * 1024 * 1024,
+  maxVoiceBytes: 20 * 1024 * 1024,
 };
 
 export function hasAllowedUsers(): boolean {

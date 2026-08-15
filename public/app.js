@@ -213,6 +213,7 @@
       ["ru-en", "🇷🇺 → 🇬🇧"],
       ["en-ru", "🇬🇧 → 🇷🇺"],
       ["natural-en", "✨ Natural English"],
+      ["smart", "🪄 Умный"],
     ];
     let selectedMode = "ru-en";
     const output = textElement("p", "translate-output", "");
@@ -260,6 +261,30 @@
     workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
+  async function showUsage() {
+    workspacePanel.replaceChildren(panelHeading("Лимит расходов", "Только оценка"));
+    const output = textElement("p", "translate-output", "Загружаем текущий лимит…");
+    workspacePanel.append(output, textElement("p", "panel-note", "Локальный лимит защищает от случайных трат. Точный расход всегда проверяйте в OpenAI Platform."));
+    workspacePanel.hidden = false;
+    state.panel = "usage";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    try {
+      const response = await fetch("/api/usage", {
+        headers: { "x-telegram-init-data": telegram?.initData ?? "" },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Статус недоступен");
+      output.textContent = [
+        `Сегодня: ~$${Number(data.estimatedUsd).toFixed(4)} из $${Number(data.limitUsd).toFixed(2)}`,
+        `Осталось: ~$${Number(data.remainingUsd).toFixed(4)}`,
+        `Аудиты: ${data.operations.audit} · Переводы: ${data.operations.translation} · Голосовые: ${data.operations.voice}`,
+      ].join("\n");
+    } catch (error) {
+      output.textContent = error instanceof Error ? error.message : "Не удалось загрузить лимит";
+      output.classList.add("unsafe");
+    }
+  }
+
   document.querySelectorAll("[data-quick-mode]").forEach((button) => {
     button.addEventListener("click", () => { clearPanel(); setMode(button.dataset.quickMode, true); });
   });
@@ -280,6 +305,7 @@
       if (panel === "card") showCard();
       if (panel === "plan") showPlan();
       if (panel === "translate") showTranslate();
+      if (panel === "usage") showUsage();
     });
   });
 

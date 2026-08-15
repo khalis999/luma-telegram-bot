@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { config } from "./config.js";
 import { enforceOutputSafety, makeFallbackResult, scanProhibited } from "./filter.js";
 import { SYSTEM_INSTRUCTIONS } from "./knowledge.js";
+import { reserveUsage } from "./usage.js";
 import type { AnalyzeInput, AuditResult } from "./types.js";
 
 const AUDIT_SCHEMA = {
@@ -132,8 +133,10 @@ export async function analyzeDialogue(input: AnalyzeInput): Promise<AuditResult>
   }
 
   const inputRisks = scanProhibited(input.text);
+  let reservation: ReturnType<typeof reserveUsage> | undefined;
 
   try {
+    reservation = reserveUsage("audit");
     const preparedImages = await Promise.all(input.images.map(prepareImage));
     const content: Array<Record<string, unknown>> = [
       { type: "input_text", text: userPrompt(input, inputRisks.map((risk) => risk.category)) },
@@ -160,11 +163,13 @@ export async function analyzeDialogue(input: AnalyzeInput): Promise<AuditResult>
         },
       },
     });
+    reservation.settleText(response.usage);
 
     if (!response.output_text) throw new Error("Модель не вернула результат");
     const parsed = JSON.parse(response.output_text) as AuditResult;
     return enforceOutputSafety(parsed, inputRisks);
   } catch (error) {
+    reservation?.cancel();
     return makeFallbackResult(inputRisks, friendlyAnalyzerError(error));
   }
 }

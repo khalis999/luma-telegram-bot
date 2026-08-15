@@ -12,6 +12,7 @@ import { createLumaBot } from "./bot.js";
 import { config, isUserAllowed } from "./config.js";
 import { validateTelegramInitData } from "./telegram-auth.js";
 import { translateText, type TranslationMode } from "./translator.js";
+import { usageSnapshot } from "./usage.js";
 
 const app = express();
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -77,6 +78,10 @@ app.get("/health", (_request, response) => {
   });
 });
 
+app.get("/api/usage", webAuth, (_request, response) => {
+  response.json(usageSnapshot());
+});
+
 app.post("/api/audit", webAuth, upload.array("screenshots", config.maxImages), async (request, response) => {
   try {
     const files = (request.files as Express.Multer.File[] | undefined) ?? [];
@@ -136,6 +141,8 @@ const server = app.listen(config.port, async () => {
     { command: "reply", description: "Три варианта ответа" },
     { command: "filter", description: "Проверить перед отправкой" },
     { command: "translate", description: "Перевести текст" },
+    { command: "remind", description: "Поставить напоминание" },
+    { command: "report", description: "Отчёт за сегодня" },
     { command: "forget", description: "Очистить временные данные" },
   ]);
 
