@@ -1,7 +1,7 @@
 import { Api, Bot, Context, InlineKeyboard } from "grammy";
 
 import { analyzeDialogue } from "./analyzer.js";
-import { findTemplate, STARTER_TEMPLATES, WORKFLOW_STAGES } from "./catalog.js";
+import { findTemplate, STARTER_TEMPLATES } from "./catalog.js";
 import { config, hasAllowedUsers, isUserAllowed } from "./config.js";
 import { formatAudit, splitTelegramMessage } from "./format.js";
 import { translateText, type TranslationMode } from "./translator.js";
@@ -18,6 +18,8 @@ interface UserWorkspace {
   translation?: TranslationMode;
   tags: string[];
   awaitingReminder: boolean;
+  awaitingDuplicates: boolean;
+  awaitingContentPlan: boolean;
   dailyReport: boolean;
   lastReportDate?: string;
   activity: {
@@ -43,11 +45,11 @@ function homeKeyboard(): InlineKeyboard {
   const keyboard = new InlineKeyboard()
     .text("🧠 Аудит", "action:audit").text("✍️ Ответ", "action:reply").row()
     .text("🛡 Проверить текст", "action:filter").text("🌐 Перевод", "action:translate").row()
-    .text("👤 Карточка", "action:card").text("🏷 Теги", "action:tags").row()
-    .text("📚 Шаблоны", "action:templates").text("🗓 План", "action:plan").row()
-    .text("🎙 Голос", "action:voice").text("⏰ Напомнить", "action:reminder").row()
-    .text("📈 Отчёт", "action:report").text("💰 Лимит", "action:budget").row()
-    .text("📊 Статус", "action:status").row()
+    .text("👤 Мини-CRM", "action:card").text("🏷 Теги", "action:tags").row()
+    .text("📚 Фразы", "action:templates").text("🔁 Антидубли", "action:duplicates").row()
+    .text("🗓 Контент-план", "action:content-plan").text("🎙 Голос", "action:voice").row()
+    .text("⏰ Напомнить", "action:reminder").text("📈 Отчёт", "action:report").row()
+    .text("💰 Лимит", "action:budget").text("📊 Статус", "action:status").row()
     .text("❓ Как пользоваться", "action:help");
 
   if (config.publicBaseUrl) keyboard.row().webApp("✦ Открыть Luma", config.publicBaseUrl);
@@ -68,6 +70,8 @@ function workspace(userId: number): UserWorkspace {
     facts: [],
     tags: [],
     awaitingReminder: false,
+    awaitingDuplicates: false,
+    awaitingContentPlan: false,
     dailyReport: false,
     activity: { audits: 0, translations: 0, voices: 0, reminders: 0 },
   };
@@ -97,6 +101,8 @@ async function setMode(context: Context, mode: AnalysisMode): Promise<void> {
   const state = workspace(userId);
   state.mode = mode;
   state.awaitingReminder = false;
+  state.awaitingDuplicates = false;
+  state.awaitingContentPlan = false;
   delete state.translation;
   await context.reply(modeCopy(mode), { reply_markup: homeKeyboard() });
 }
@@ -301,6 +307,50 @@ function cardText(state: UserWorkspace): string {
   return lines.filter(Boolean).join("\n");
 }
 
+function duplicateReport(text: string): string {
+  const fragments = text
+    .split(/\n+|(?<=[.!?])\s+/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 8)
+    .slice(0, 300);
+  const seen = new Map<string, number[]>();
+
+  fragments.forEach((fragment, index) => {
+    const key = fragment
+      .toLocaleLowerCase()
+      .normalize("NFKD")
+      .replace(/[^\p{L}\p{N}]+/gu, "");
+    if (key.length < 8) return;
+    const items = seen.get(key) ?? [];
+    items.push(index + 1);
+    seen.set(key, items);
+  });
+
+  const duplicates = [...seen.values()].filter((items) => items.length > 1);
+  if (duplicates.length === 0) {
+    return "🔁 Антидубли\n\nПовторов в сообщении не найдено. Текст можно отправлять после обычной проверки фильтром.";
+  }
+
+  const lines = duplicates.slice(0, 8).map((items, index) => `• Повтор ${index + 1}: фразы ${items.join(", ")}`);
+  return ["🔁 Антидубли", "", `Найдено повторов: ${duplicates.length}. Исходные фразы не показываю, чтобы не воспроизводить рискованный текст.`, "", ...lines, "", "Уберите дубли и проверьте финальную версию через «Проверить текст»."].join("\n");
+}
+
+function contentPlanText(): string {
+  return [
+    "🗓 Контент-план на 7 дней",
+    "",
+    "1. Лёгкий лайф-кадр: настроение дня + один естественный вопрос.",
+    "2. Интерес или хобби: короткая история, фото или видео процесса.",
+    "3. Закулисье: как готовится образ, идея или рабочее место.",
+    "4. Опрос: предложите аудитории выбрать тему следующего поста.",
+    "5. Личное достижение: тренировка, учёба, маленькая цель дня.",
+    "6. Подборка: 2–3 безопасных кадра или мысли недели.",
+    "7. Итог недели: благодарность и вопрос, что аудитории понравилось больше.",
+    "",
+    "Перед публикацией проверьте описание кнопкой «Проверить текст». Не включайте личные данные, внешние платежи или предложения вне платформы.",
+  ].join("\n");
+}
+
 function tagsKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🆕 Новый", "tag:новый").text("⭐ Постоянный", "tag:постоянный").row()
@@ -336,7 +386,7 @@ export function createLumaBot(token: string): Bot {
   });
 
   bot.command("help", async (context) => {
-    await context.reply("Аудит проверяет диалог, Ответ готовит 3 варианта, Фильтр ищет риски. Можно отправить голосовое до 20 МБ — верну текст. Напоминание: /remind 30 текст. «Карточка» и отчёты хранятся только до перезапуска бота.", { reply_markup: homeKeyboard() });
+    await context.reply("Аудит проверяет диалог, «Ответ» готовит 3 варианта, «Фильтр» ищет риски. Есть перевод, голос-в-текст, Mini-CRM, быстрые фразы, антидубли, контент-план, напоминания, ежедневный отчёт и лимит расходов. Напоминание: /remind 30 текст. Данные не отправляются клиентам автоматически.", { reply_markup: homeKeyboard() });
   });
 
   bot.command("forget", async (context) => {
@@ -404,6 +454,8 @@ export function createLumaBot(token: string): Bot {
       const state = workspace(userId!);
       if (id !== "translate") delete state.translation;
       if (id !== "reminder") state.awaitingReminder = false;
+      if (id !== "duplicates") state.awaitingDuplicates = false;
+      if (id !== "content-plan") state.awaitingContentPlan = false;
       if (id === "audit" || id === "reply" || id === "filter") {
         await setMode(context, id);
         return;
@@ -418,6 +470,16 @@ export function createLumaBot(token: string): Bot {
       }
       if (id === "templates") {
         await context.reply("Выберите заготовку — я покажу готовый вариант на русском и английском:", { reply_markup: templatesKeyboard() });
+        return;
+      }
+      if (id === "duplicates") {
+        state.awaitingDuplicates = true;
+        await context.reply("🔁 Пришлите текст. Я отмечу повторяющиеся фразы по их номерам и не буду воспроизводить рискованный фрагмент.", { reply_markup: homeKeyboard() });
+        return;
+      }
+      if (id === "content-plan") {
+        state.awaitingContentPlan = true;
+        await context.reply("🗓 Пришлите тему или цель недели — я дам компактный план на 7 дней. Не указывайте личные данные.", { reply_markup: homeKeyboard() });
         return;
       }
       if (id === "translate") {
@@ -451,10 +513,6 @@ export function createLumaBot(token: string): Bot {
       }
       if (id === "budget") {
         await context.reply(`💰 Лимит расходов\n\n${formatUsageSummary()}`, { reply_markup: homeKeyboard() });
-        return;
-      }
-      if (id === "plan") {
-        await context.reply(["🗓 План спокойного диалога", "", ...WORKFLOW_STAGES].join("\n\n"), { reply_markup: homeKeyboard() });
         return;
       }
       if (id === "status") {
@@ -556,6 +614,16 @@ export function createLumaBot(token: string): Bot {
       state.awaitingReminder = false;
       if (await addReminderFromText(context, context.message.text)) return;
       await context.reply("Не получилось прочитать напоминание. Формат: 30 проверить ответ", { reply_markup: homeKeyboard() });
+      return;
+    }
+    if (state?.awaitingDuplicates) {
+      state.awaitingDuplicates = false;
+      await context.reply(duplicateReport(context.message.text), { reply_markup: homeKeyboard() });
+      return;
+    }
+    if (state?.awaitingContentPlan) {
+      state.awaitingContentPlan = false;
+      await context.reply(contentPlanText(), { reply_markup: homeKeyboard() });
       return;
     }
     const translation = state?.translation;
