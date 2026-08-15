@@ -30,6 +30,11 @@ describe("risk filter", () => {
     expect(hits.map((hit) => hit.category)).toEqual(expect.arrayContaining(["personal-contact-risk", "off-platform-payment-risk"]));
   });
 
+  it("blocks personal-contact variants without blocking a normal follow-up question", () => {
+    expect(scanProhibited("Мы встретимся позже").map((hit) => hit.category)).toContain("personal-contact-risk");
+    expect(scanProhibited("Это уместный встречный вопрос")).toEqual([]);
+  });
+
   it("leaves safe reply variants intact", () => {
     const checked = enforceOutputSafety(safeResult, []);
     expect(checked.safeToSend).toBe(true);

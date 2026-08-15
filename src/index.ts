@@ -94,17 +94,19 @@ if (config.telegramBotToken) {
   bot = createLumaBot(config.telegramBotToken);
   const webhookSecret = config.telegramWebhookSecret;
 
-  app.use(
-    "/telegram/webhook",
-    (request, response, next) => {
-      if (webhookSecret && request.header("x-telegram-bot-api-secret-token") !== webhookSecret) {
-        response.sendStatus(401);
-        return;
-      }
-      next();
-    },
-    webhookCallback(bot, "express"),
-  );
+  if (config.publicBaseUrl) {
+    app.use(
+      "/telegram/webhook",
+      (request, response, next) => {
+        if (webhookSecret && request.header("x-telegram-bot-api-secret-token") !== webhookSecret) {
+          response.sendStatus(401);
+          return;
+        }
+        next();
+      },
+      webhookCallback(bot, "express"),
+    );
+  }
 }
 
 const server = app.listen(config.port, async () => {

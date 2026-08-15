@@ -76,7 +76,7 @@ export const PROHIBITED_TERMS: Record<string, string[]> = {
   "personal-contact-risk": [
     "escort", "escorting", "prostitute", "prostitution", "hooker", "brothel", "full service", "meet", "meeting",
     "meetup", "meet up", "in person", "hook up", "hookup", "pay to meet", "sex for money",
-    "sugar daddy", "встреча", "встретиться", "личная встреча", "эскорт",
+    "sugar daddy", "встрет", "встреча", "встречи", "встречу", "встречей", "встречами", "встречах", "эскорт",
   ],
   "off-platform-payment-risk": [
     "cash app", "cashapp", "venmo", "paypal", "zelle", "apple pay", "google pay", "western union",

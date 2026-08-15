@@ -68,6 +68,47 @@ h1 { margin-bottom: 2px; font-size: clamp(32px, 8vw, 46px); letter-spacing: -0.0
 h2 { margin: 5px 0 0; font-size: 22px; letter-spacing: -0.025em; }
 .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
 
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.quick-action {
+  display: grid;
+  min-height: 74px;
+  place-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: #725663;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.quick-action span { font-size: 20px; }
+.quick-action:active { transform: scale(0.97); }
+.quick-action.active { border-color: #e38bad; color: var(--pink-dark); background: #fff; box-shadow: 0 10px 24px rgba(190, 51, 110, 0.11); }
+
+.workspace-panel { margin-bottom: 16px; }
+.workspace-panel[hidden] { display: none; }
+.template-grid { display: grid; gap: 10px; margin-top: 18px; }
+.template-card { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fffafd; }
+.template-text { margin: 0; color: #5f4a55; font-size: 13px; line-height: 1.5; }
+.template-card .copy { justify-self: start; }
+.fact-list { display: grid; gap: 8px; margin: 14px 0; }
+.fact { margin: 0; border-radius: 12px; padding: 10px 12px; color: #5b4652; background: #fff8fb; font-size: 13px; }
+.panel-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.secondary { border: 1px solid #e4a6c0; border-radius: 12px; color: var(--pink-dark); background: #fff; padding: 10px 12px; cursor: pointer; font-size: 12px; font-weight: 800; }
+.secondary.danger { border-color: #ebc7cf; color: #b63855; }
+.panel-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.plan-list { display: grid; gap: 12px; margin: 18px 0 0; padding-left: 22px; color: #594650; line-height: 1.5; }
+.plan-list li::marker { color: var(--pink); font-weight: 900; }
+
 .card, .score-card {
   border: 1px solid rgba(238, 213, 225, 0.9);
   border-radius: 28px;
@@ -230,4 +271,5 @@ textarea:focus { border-color: #e48aae; box-shadow: 0 0 0 4px rgba(217, 77, 135,
 @media (min-width: 640px) {
   .shell { padding-inline: 24px; }
   .card { padding: 26px; }
+  .quick-action { min-height: 82px; font-size: 13px; }
 }

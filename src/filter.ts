@@ -80,6 +80,7 @@ const STEM_TERMS = new Set([
   "лактац",
   "мочеиспуск",
   "фекал",
+  "встрет",
 ]);
 
 function escapeRegex(value: string): string {

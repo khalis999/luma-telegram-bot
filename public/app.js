@@ -5,13 +5,63 @@
   telegram?.setHeaderColor?.("#fff7fb");
   telegram?.setBackgroundColor?.("#fff7fb");
 
-  const state = { mode: "audit", language: "ru", files: [], result: null };
+  const CARD_STORAGE_KEY = "luma-member-card-v1";
+  const TEMPLATES = [
+    {
+      title: "Тёплое знакомство",
+      ru: "Рада познакомиться 🙂 Как мне к тебе обращаться и откуда ты сегодня пишешь?",
+      en: "Nice to meet you 🙂 What should I call you, and where are you writing from today?",
+    },
+    {
+      title: "Мягкое продолжение",
+      ru: "Мне понравилось, как ты об этом рассказал. А что в этом тебе нравится больше всего?",
+      en: "I liked the way you described that. What do you enjoy most about it?",
+    },
+    {
+      title: "Благодарность",
+      ru: "Спасибо за поддержку, мне правда очень приятно. Что тебе сегодня больше всего понравилось?",
+      en: "Thank you for your support, I really appreciate it. What did you enjoy most today?",
+    },
+    {
+      title: "Спокойная граница",
+      ru: "Я хочу, чтобы нам обоим было комфортно. Давай продолжим разговор в рамках правил?",
+      en: "I want this to feel comfortable for both of us. Shall we continue within the platform rules?",
+    },
+  ];
+  const PLAN = [
+    "Начните с контекста: имя, интересы и настроение, без допроса.",
+    "Поддерживайте живой разговор: короткий ответ и уместный встречный вопрос.",
+    "Перед сложным сообщением используйте фильтр и соблюдайте правила платформы.",
+    "Сохраняйте только подтверждённые, несенситивные факты из диалога.",
+  ];
+  const state = { mode: "audit", language: "ru", files: [], result: null, panel: null, savedCard: loadCard() };
   const dialogue = document.querySelector("#dialogue");
   const screenshots = document.querySelector("#screenshots");
   const fileList = document.querySelector("#file-list");
   const analyzeButton = document.querySelector("#analyze");
   const status = document.querySelector("#status");
   const resultSection = document.querySelector("#result");
+  const workspacePanel = document.querySelector("#workspace-panel");
+  const inputTitle = document.querySelector("#input-title");
+
+  function loadCard() {
+    try {
+      const saved = localStorage.getItem(CARD_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistCard(card) {
+    state.savedCard = card;
+    try {
+      if (card) localStorage.setItem(CARD_STORAGE_KEY, JSON.stringify(card));
+      else localStorage.removeItem(CARD_STORAGE_KEY);
+    } catch {
+      setStatus("Не удалось сохранить карточку в браузере.", true);
+    }
+  }
 
   function setStatus(message, isError = false) {
     status.textContent = message;
@@ -45,10 +95,126 @@
     renderFiles();
   });
 
+  function setMode(mode, focus = false) {
+    state.mode = mode;
+    document.querySelectorAll(".mode").forEach((item) => item.classList.toggle("active", item.dataset.mode === mode));
+    document.querySelectorAll("[data-quick-mode]").forEach((item) => item.classList.toggle("active", item.dataset.quickMode === mode));
+    const labels = {
+      audit: ["Добавьте диалог", "Проверить диалог", "Вставьте переписку или добавьте скриншоты ниже…"],
+      reply: ["Добавьте контекст", "Подготовить ответы", "Вставьте сообщение или диалог, на который нужен ответ…"],
+      filter: ["Проверьте сообщение", "Проверить текст", "Вставьте текст, который хотите проверить перед отправкой…"],
+    };
+    const [title, buttonLabel, placeholder] = labels[mode];
+    inputTitle.textContent = title;
+    analyzeButton.querySelector("span").textContent = buttonLabel;
+    dialogue.placeholder = placeholder;
+    if (focus) dialogue.focus({ preventScroll: true });
+  }
+
   document.querySelectorAll(".mode").forEach((button) => {
+    button.addEventListener("click", () => setMode(button.dataset.mode, true));
+  });
+
+  function clearPanel() {
+    workspacePanel.hidden = true;
+    workspacePanel.replaceChildren();
+    state.panel = null;
+  }
+
+  function panelHeading(title, note) {
+    const heading = document.createElement("div");
+    heading.className = "section-heading";
+    const copy = document.createElement("div");
+    copy.append(textElement("span", "step", "LUMA WORKSPACE"), textElement("h2", "", title));
+    heading.append(copy);
+    if (note) heading.append(textElement("span", "privacy-pill", note));
+    return heading;
+  }
+
+  function showTemplates() {
+    workspacePanel.replaceChildren(panelHeading("Готовые шаблоны", "RU + EN"));
+    const grid = document.createElement("div");
+    grid.className = "template-grid";
+    TEMPLATES.forEach((template) => {
+      const card = document.createElement("article");
+      card.className = "template-card";
+      const action = textElement("button", "copy", "Вставить");
+      action.type = "button";
+      action.addEventListener("click", () => {
+        dialogue.value = template[state.language];
+        clearPanel();
+        setMode("reply", true);
+        setStatus("Шаблон вставлен. При необходимости отредактируйте его перед проверкой.");
+      });
+      card.append(textElement("h3", "reply-title", template.title), textElement("p", "template-text", template[state.language]), action);
+      grid.append(card);
+    });
+    workspacePanel.append(grid);
+    workspacePanel.hidden = false;
+    state.panel = "templates";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function cardSource() {
+    if (state.savedCard) return state.savedCard;
+    if (!state.result?.memberFacts?.length) return null;
+    return { stage: state.result.stage, facts: state.result.memberFacts.filter((fact) => fact.confidence !== "low") };
+  }
+
+  function showCard() {
+    workspacePanel.replaceChildren(panelHeading("Карточка клиента", "Только браузер"));
+    const source = cardSource();
+    if (!source?.facts?.length) {
+      workspacePanel.append(textElement("p", "summary", "Карточка пока пуста. Сначала проведите аудит: в неё можно сохранить только подтверждённые факты из результата."));
+    } else {
+      workspacePanel.append(textElement("p", "summary", source.stage ? `Этап: ${source.stage}` : "Подтверждённые факты:"));
+      const facts = document.createElement("div");
+      facts.className = "fact-list";
+      source.facts.slice(0, 12).forEach((fact) => facts.append(textElement("p", "fact", `${fact.field}: ${fact.value}`)));
+      workspacePanel.append(facts);
+      const controls = document.createElement("div");
+      controls.className = "panel-controls";
+      if (!state.savedCard && state.result?.memberFacts?.length) {
+        const save = textElement("button", "secondary", "Сохранить в этом браузере");
+        save.type = "button";
+        save.addEventListener("click", () => { persistCard(source); showCard(); });
+        controls.append(save);
+      }
+      if (state.savedCard) {
+        const remove = textElement("button", "secondary danger", "Очистить карточку");
+        remove.type = "button";
+        remove.addEventListener("click", () => { persistCard(null); showCard(); });
+        controls.append(remove);
+      }
+      workspacePanel.append(controls);
+    }
+    workspacePanel.append(textElement("p", "panel-note", "Карточка хранится только в памяти этого браузера. Никакой базы данных здесь нет."));
+    workspacePanel.hidden = false;
+    state.panel = "card";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function showPlan() {
+    workspacePanel.replaceChildren(panelHeading("План диалога", "4 шага"));
+    const list = document.createElement("ol");
+    list.className = "plan-list";
+    PLAN.forEach((item) => list.append(textElement("li", "", item)));
+    workspacePanel.append(list, textElement("p", "panel-note", "Кнопки и шаблоны помогают оператору — ответы клиенту автоматически не отправляются."));
+    workspacePanel.hidden = false;
+    state.panel = "plan";
+    workspacePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  document.querySelectorAll("[data-quick-mode]").forEach((button) => {
+    button.addEventListener("click", () => { clearPanel(); setMode(button.dataset.quickMode, true); });
+  });
+  document.querySelectorAll("[data-panel]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.mode = button.dataset.mode;
-      document.querySelectorAll(".mode").forEach((item) => item.classList.toggle("active", item === button));
+      const panel = button.dataset.panel;
+      if (state.panel === panel) return clearPanel();
+      if (panel === "templates") showTemplates();
+      if (panel === "card") showCard();
+      if (panel === "plan") showPlan();
     });
   });
 
@@ -152,6 +318,7 @@
       state.result = data;
       setStatus("Готово");
       renderResult();
+      if (state.panel === "card") showCard();
       telegram?.HapticFeedback?.notificationOccurred?.("success");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Не удалось выполнить анализ", true);
