@@ -3,4 +3,5 @@ packages:
 
 allowBuilds:
   esbuild: true
+  ffmpeg-static: true
   sharp: true
