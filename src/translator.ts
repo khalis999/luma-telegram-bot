@@ -32,6 +32,24 @@ function blockedResult(mode: TranslationMode): TranslationResult {
   return { label: translationLabel(mode), text, safe: false };
 }
 
+function friendlyTranslatorError(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (message.includes("missing-key") || message.includes("incorrect api key") || message.includes("invalid api key")) {
+    return "Переводчик не подключён: добавьте корректный OPENAI_API_KEY в Secrets Replit и перезапустите приложение.";
+  }
+
+  if (message.includes("quota") || message.includes("billing") || message.includes("credit") || message.includes("insufficient")) {
+    return "Переводчик временно недоступен: для OpenAI API нужен доступный лимит или активный биллинг проекта.";
+  }
+
+  if (message.includes("model") && (message.includes("not found") || message.includes("does not exist") || message.includes("access"))) {
+    return "Переводчик временно недоступен: выбранная AI-модель недоступна для этого API-ключа.";
+  }
+
+  return "Переводчик временно недоступен. Попробуйте ещё раз через минуту.";
+}
+
 export async function translateText(text: string, mode: TranslationMode): Promise<TranslationResult> {
   const source = text.trim();
   if (!source) throw new Error("Добавьте текст для перевода");
@@ -59,7 +77,8 @@ export async function translateText(text: string, mode: TranslationMode): Promis
     const translated = response.output_text.trim();
     if (!translated || scanProhibited(translated).length > 0) return blockedResult(mode);
     return { label: translationLabel(mode), text: translated, safe: true };
-  } catch {
-    throw new Error("Переводчик временно недоступен. Проверьте подключение AI API.");
+  } catch (error) {
+    console.error("[luma] translator error:", error);
+    throw new Error(friendlyTranslatorError(error));
   }
 }
