@@ -162,6 +162,10 @@ const server = app.listen(config.port, async () => {
     });
     console.log("[luma] Telegram webhook and Mini App menu configured");
   } else {
+    // A workspace preview URL is not a stable public HTTPS endpoint. Clear an
+    // old webhook before using long polling so the bot continues to answer
+    // even when no deployed Mini App URL has been configured.
+    await bot.api.deleteWebhook({ drop_pending_updates: false });
     void bot.start({ onStart: () => console.log("[luma] Telegram long polling started") });
   }
 });
