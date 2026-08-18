@@ -112,6 +112,9 @@ app.post("/api/translate", webAuth, async (request, response) => {
 let bot: ReturnType<typeof createLumaBot> | undefined;
 if (config.telegramBotToken && !config.localWebOnly) {
   bot = createLumaBot(config.telegramBotToken);
+  bot.catch((error) => {
+    console.error("[luma] Telegram update failed; keeping the bot process alive", error);
+  });
   const webhookSecret = config.telegramWebhookSecret;
 
   if (config.publicBaseUrl) {
@@ -129,6 +132,33 @@ if (config.telegramBotToken && !config.localWebOnly) {
   }
 }
 
+const telegramCommands = [
+  { command: "start", description: "Открыть Luma" },
+  { command: "audit", description: "Полный аудит текста" },
+  { command: "reply", description: "Три варианта ответа" },
+  { command: "filter", description: "Проверить перед отправкой" },
+  { command: "translate", description: "Перевести текст" },
+  { command: "remind", description: "Поставить напоминание" },
+  { command: "report", description: "Отчёт за сегодня" },
+  { command: "forget", description: "Очистить временные данные" },
+] as const;
+
+async function startPollingWithRetry() {
+  if (!bot) return;
+
+  let delayMs = 1_000;
+  while (true) {
+    try {
+      await bot.start({ onStart: () => console.log("[luma] Telegram long polling started") });
+      return;
+    } catch (error) {
+      console.error(`[luma] Telegram polling stopped; retrying in ${delayMs}ms`, error);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 30_000);
+    }
+  }
+}
+
 const server = app.listen(config.port, async () => {
   console.log(`[luma] server listening on port ${config.port}`);
 
@@ -137,36 +167,39 @@ const server = app.listen(config.port, async () => {
     return;
   }
 
-  await bot.api.setMyCommands([
-    { command: "start", description: "Открыть Luma" },
-    { command: "audit", description: "Полный аудит текста" },
-    { command: "reply", description: "Три варианта ответа" },
-    { command: "filter", description: "Проверить перед отправкой" },
-    { command: "translate", description: "Перевести текст" },
-    { command: "remind", description: "Поставить напоминание" },
-    { command: "report", description: "Отчёт за сегодня" },
-    { command: "forget", description: "Очистить временные данные" },
-  ]);
+  try {
+    await bot.api.setMyCommands(telegramCommands);
+  } catch (error) {
+    console.error("[luma] Could not update Telegram commands; continuing startup", error);
+  }
 
   if (config.publicBaseUrl) {
-    const webhookOptions = config.telegramWebhookSecret
-      ? { secret_token: config.telegramWebhookSecret }
-      : undefined;
-    await bot.api.setWebhook(`${config.publicBaseUrl}/telegram/webhook`, webhookOptions);
-    await bot.api.setChatMenuButton({
-      menu_button: {
-        type: "web_app",
-        text: "Открыть Luma",
-        web_app: { url: config.publicBaseUrl },
-      },
-    });
-    console.log("[luma] Telegram webhook and Mini App menu configured");
+    try {
+      const webhookOptions = config.telegramWebhookSecret
+        ? { secret_token: config.telegramWebhookSecret }
+        : undefined;
+      await bot.api.setWebhook(`${config.publicBaseUrl}/telegram/webhook`, webhookOptions);
+      await bot.api.setChatMenuButton({
+        menu_button: {
+          type: "web_app",
+          text: "Открыть Luma",
+          web_app: { url: config.publicBaseUrl },
+        },
+      });
+      console.log("[luma] Telegram webhook and Mini App menu configured");
+    } catch (error) {
+      console.error("[luma] Could not configure Telegram webhook; continuing server startup", error);
+    }
   } else {
     // A workspace preview URL is not a stable public HTTPS endpoint. Clear an
     // old webhook before using long polling so the bot continues to answer
     // even when no deployed Mini App URL has been configured.
-    await bot.api.deleteWebhook({ drop_pending_updates: false });
-    void bot.start({ onStart: () => console.log("[luma] Telegram long polling started") });
+    try {
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+    } catch (error) {
+      console.error("[luma] Could not clear the old Telegram webhook; polling will retry", error);
+    }
+    void startPollingWithRetry();
   }
 });
 
