@@ -1,7 +1,8 @@
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production
-ENV PORT=3000
+# Hostless exposes the web process on port 8000 by default.
+ENV PORT=8000
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
@@ -15,5 +16,5 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-EXPOSE 3000
+EXPOSE 8000
 CMD ["node", "dist/src/index.js"]
