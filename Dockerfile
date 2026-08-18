@@ -11,7 +11,8 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* ./
-RUN corepack enable && pnpm install --frozen-lockfile
+# Install a pinned pnpm directly; this avoids Corepack signature drift in slim images.
+RUN npm install --global pnpm@11.19.0 && pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm build
