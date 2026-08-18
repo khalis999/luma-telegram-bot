@@ -2,6 +2,9 @@ build:
   system: docker
 
 dockerfile_path: "./Dockerfile"
+working_directory: "/"
+build_context_directory: "/"
+start_command: "node dist/src/index.js"
 
 # Keep a single always-on instance so Telegram long polling has one owner.
 scaling:
